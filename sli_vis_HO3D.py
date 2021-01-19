@@ -6,6 +6,10 @@ import pip
 import argparse
 from utils.vis_utils import *
 import random
+from IPython import embed
+import trimesh
+import open3d as o3d
+
 
 def install(package):
     if hasattr(pip, 'main'):
@@ -73,7 +77,6 @@ def forwardKinematics(fullpose, trans, beta):
 
 
 if __name__ == '__main__':
-
     # parse the input arguments
     ap = argparse.ArgumentParser()
     ap.add_argument("ho3d_path", type=str, help="Path to HO3D dataset")
@@ -95,7 +98,6 @@ if __name__ == '__main__':
     # some checks to decide if visualizing one single image or randomly picked images
     if args['seq'] is None:
         args['seq'] = random.choice(os.listdir(join(baseDir, split)))
-        # args['seq'] = 'BB10'
         runLoop = True
     else:
         runLoop = False
@@ -104,7 +106,6 @@ if __name__ == '__main__':
         args['id'] = random.choice(os.listdir(join(baseDir, split, args['seq'], 'rgb'))).split('.')[0]
     else:
         pass
-
 
     while(True):
         seqName = args['seq']
@@ -124,6 +125,30 @@ if __name__ == '__main__':
         if split == 'train':
             handJoints3D, handMesh = forwardKinematics(anno['handPose'], anno['handTrans'], anno['handBeta'])
 
+        # fingertip 3d keypoints
+        tipJoints3D = handJoints3D[16:]
+        # vertices of hand area
+        tip_v_dict = {}
+        if hasattr(handMesh, 'r'):
+            th_tip_v = np.vstack([handMesh.r[717:719, :], handMesh.r[730:731, :], handMesh.r[733:741, :],
+                                  handMesh.r[743:747, :], handMesh.r[748:752, :], handMesh.r[756, :],
+                                  handMesh.r[759:769, :]])  # 30
+            tip_v_dict[0] = th_tip_v
+            ff_tip_v = np.vstack([handMesh.r[317:321, :], handMesh.r[322:330, :], handMesh.r[332:334, :],
+                                  handMesh.r[338:340, :], handMesh.r[343, :], handMesh.r[346:356, :]])  # 27
+            tip_v_dict[1] = ff_tip_v
+            mf_tip_v = np.vstack([handMesh.r[450, :], handMesh.r[455, :],handMesh.r[458:468, :],
+                                  handMesh.r[429, :], handMesh.r[432:440, :], handMesh.r[442:445, :]])  # 24
+            tip_v_dict[2] = mf_tip_v
+            rf_tip_v = np.vstack([handMesh.r[543:551, :], handMesh.r[554:556, :], handMesh.r[559:562, :],
+                                  handMesh.r[566, :], handMesh.r[569:579, :], handMesh.r[540, :]])  # 25
+            tip_v_dict[3] = rf_tip_v
+            lf_tip_v = np.vstack([handMesh.r[657:658, :], handMesh.r[660:668, :], handMesh.r[675:679, :],
+                                  handMesh.r[670:673, :], handMesh.r[683, :], handMesh.r[686:696, :]])   # 27
+            tip_v_dict[4] = lf_tip_v
+            tip_v = np.vstack([th_tip_v, ff_tip_v, mf_tip_v, rf_tip_v, lf_tip_v])
+
+
         # project to 2D
         if split == 'train':
             handKps = project_3D_points(anno['camMat'], handJoints3D, is_OpenGL_coords=True)
@@ -135,24 +160,34 @@ if __name__ == '__main__':
         # Visualize
         if args['visType'] == 'open3d':
             # open3d visualization
-
             if not os.path.exists(os.path.join(YCBModelsDir, 'models', anno['objName'], 'textured_simple.obj')):
                 raise Exception('3D object models not available in %s'%(os.path.join(YCBModelsDir, 'models', anno['objName'], 'textured_simple.obj')))
 
             # load object model
             objMesh = read_obj(os.path.join(YCBModelsDir, 'models', anno['objName'], 'textured_simple.obj'))
+            mesh = trimesh.load(os.path.join(YCBModelsDir, 'models', anno['objName'], 'textured_simple.obj'))
 
             # apply current pose to the object model
             objMesh.v = np.matmul(objMesh.v, cv2.Rodrigues(anno['objRot'])[0].T) + anno['objTrans']
+            mesh.vertices = np.matmul(mesh.vertices, cv2.Rodrigues(anno['objRot'])[0].T) + anno['objTrans']
+            contact = np.zeros([5])
+            for i in range(5):
+                dis = trimesh.proximity.signed_distance(mesh, tip_v_dict[i])
+                print(dis)
+                if np.where(np.abs(dis) < 0.0005)[0].shape[0]:
+                    contact[i] = 1
+            print(contact)
+
+            ## implicit interaction to emplicit interaction
+            ## compared to build objec mesh, get contact info --> easier
 
             # show
-            #objMesh.compute_vertex_normals()
             if split == 'train':
-                open3dVisualize([handMesh, objMesh], ['r', 'g'])
+                open3dVisualize_tip([handMesh, objMesh], tip_v, tipJoints3D,  ['r', 'g'])
             else:
                 open3dVisualize([objMesh], ['r', 'g'])
 
-        #elif args['visType'] == 'matplotlib':
+        # elif args['visType'] == 'matplotlib':
 
             # draw 2D projections of annotations on RGB image
             if split == 'train':
@@ -198,7 +233,6 @@ if __name__ == '__main__':
 
         if runLoop:
             args['seq'] = random.choice(os.listdir(join(baseDir, split)))
-            # args['seq'] = 'BB10'
             args['id'] = random.choice(os.listdir(join(baseDir, split, args['seq'], 'rgb'))).split('.')[0]
         else:
             break

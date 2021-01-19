@@ -9,6 +9,8 @@ import math
 import sys
 import matplotlib.pyplot as plt
 import cv2
+import open3d
+
 
 """ General util functions. """
 def _assert_exist(p):
@@ -250,8 +252,76 @@ class Minimal(object):
     def __init__(self, **kwargs):
         self.__dict__ = kwargs
 
-def open3dVisualize(mList, colorList):
+def text_3d(text, pos, direction=None, degree=-90, density=10, font='/usr/share/fonts/truetype/freefont/FreeMono.ttf', font_size=10):
+    """
+    Generate a 3D text point cloud used for visualization.
+    :param text: content of the text
+    :param pos: 3D xyz position of the text upper left corner
+    :param direction: 3D normalized direction of where the text faces
+    :param degree: in plane rotation of text
+    :param density: control the number of the point cloud of text.
+    :param font: Name of the font - change it according to your system
+    :param font_size: size of the font
+    :return: o3d.geoemtry.PointCloud object
+    """
     import open3d
+    if direction is None:
+        direction = (0., 0., 1.)
+
+    from PIL import Image, ImageFont, ImageDraw
+    from pyquaternion import Quaternion
+
+    font_obj = ImageFont.truetype(font, font_size * density)
+    font_dim = font_obj.getsize(text)
+
+    img = Image.new('RGB', font_dim, color=(255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    draw.text((0, 0), text, font=font_obj, fill=(0, 0, 0))
+    img = np.asarray(img)
+    img_mask = img[:, :, 0] < 128
+    indices = np.indices([*img.shape[0:2], 1])[:, img_mask, 0].reshape(3, -1).T
+
+    pcd = open3d.geometry.PointCloud()
+    pcd.colors = open3d.utility.Vector3dVector(img[img_mask, :].astype(float) / 255.0)
+    pcd.points = open3d.utility.Vector3dVector(indices / 1000 / density)
+
+    raxis = np.cross([0.0, 0.0, 1.0], direction)
+    if np.linalg.norm(raxis) < 1e-6:
+        raxis = (0.0, 0.0, 1.0)
+    trans = (Quaternion(axis=raxis, radians=np.arccos(direction[2])) *
+             Quaternion(axis=direction, degrees=degree)).transformation_matrix
+    trans[0:3, 3] = np.asarray(pos)
+    pcd.transform(trans)
+    return pcd
+
+def open3dVisualize(mList, colorList):
+    o3dMeshList = []
+    for i, m in enumerate(mList):
+        mesh = open3d.geometry.TriangleMesh()
+        numVert = 0
+        # from IPython import embed
+        # embed();exit()
+        if hasattr(m, 'r'):
+            mesh.vertices = open3d.utility.Vector3dVector(np.copy(m.r))
+            numVert = m.r.shape[0]
+        elif hasattr(m, 'v'):
+            mesh.vertices = open3d.utility.Vector3dVector(np.copy(m.v))
+            numVert = m.v.shape[0]
+        else:
+            raise Exception('Unknown Mesh format')
+        mesh.triangles = open3d.utility.Vector3iVector(np.copy(m.f))
+        if colorList[i] == 'r':
+            mesh.vertex_colors = open3d.utility.Vector3dVector(np.tile(np.array([[0.6, 0.2, 0.2]]), [numVert, 1]))
+        elif colorList[i] == 'g':
+            mesh.vertex_colors = open3d.utility.Vector3dVector(np.tile(np.array([[0.5, 0.5, 0.5]]), [numVert, 1]))
+        else:
+            raise Exception('Unknown mesh color')
+
+        mesh.compute_vertex_normals()
+        o3dMeshList.append(mesh)
+    open3d.visualization.draw_geometries(o3dMeshList)
+
+def open3dVisualize_tip(mList, tip_v, tipJoints3D, colorList):
     o3dMeshList = []
     for i, m in enumerate(mList):
         mesh = open3d.geometry.TriangleMesh()
@@ -272,7 +342,28 @@ def open3dVisualize(mList, colorList):
         else:
             raise Exception('Unknown mesh color')
 
+        mesh.compute_vertex_normals()
         o3dMeshList.append(mesh)
+
+    tip_pcd = open3d.geometry.PointCloud()
+    tip_pcd.points = open3d.utility.Vector3dVector(tip_v)
+    tip_pcd.paint_uniform_color([0.1, 0.1, 0.7])
+    o3dMeshList.append(tip_pcd)
+
+    # for i in range(740, 750):
+    #     chessboard_coord = open3d.geometry.TriangleMesh.create_coordinate_frame(size=0.02, origin=[0, 0, 0])
+    #     pcd_10 = text_3d(str(i), pos=m.r[i], font_size=5, density=10)
+    #     o3dMeshList.append(pcd_10)
+
+    key_points_radius = 0.001
+    for i, key_point in enumerate(tipJoints3D):
+        mesh_sphere = open3d.geometry.TriangleMesh.create_sphere(radius=key_points_radius)
+        trans = np.eye(4)
+        trans[:3, 3] = key_point
+        mesh_sphere.transform(trans)
+        mesh_sphere.compute_vertex_normals()
+        o3dMeshList.append(mesh_sphere)
+
     open3d.visualization.draw_geometries(o3dMeshList)
 
 def read_obj(filename):
@@ -321,7 +412,6 @@ def read_obj(filename):
     result = Minimal(**d)
 
     return result
-
 
 def db_size(set_name):
     """ Hardcoded size of the datasets. """
@@ -375,7 +465,6 @@ def read_RGB_img(base_dir, seq_name, file_id, split):
     img = cv2.imread(img_filename)
 
     return img
-
 
 def read_depth_img(base_dir, seq_name, file_id, split):
     """Read the depth image in dataset and decode it"""
