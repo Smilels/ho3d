@@ -148,7 +148,6 @@ if __name__ == '__main__':
             tip_v_dict[4] = lf_tip_v
             tip_v = np.vstack([th_tip_v, ff_tip_v, mf_tip_v, rf_tip_v, lf_tip_v])
 
-
         # project to 2D
         if split == 'train':
             handKps = project_3D_points(anno['camMat'], handJoints3D, is_OpenGL_coords=True)
@@ -157,38 +156,38 @@ if __name__ == '__main__':
             handKps = project_3D_points(anno['camMat'], np.expand_dims(anno['handJoints3D'],0), is_OpenGL_coords=True)
         objKps = project_3D_points(anno['camMat'], objCornersTrans, is_OpenGL_coords=True)
 
+        # load object model
+        if not os.path.exists(os.path.join(YCBModelsDir, 'models', anno['objName'], 'textured_simple.obj')):
+            raise Exception('3D object models not available in %s'%(os.path.join(YCBModelsDir, 'models', anno['objName'], 'textured_simple.obj')))
+
+        objMesh = read_obj(os.path.join(YCBModelsDir, 'models', anno['objName'], 'textured_simple.obj'))
+        # load mesh by trimesh
+        mesh = trimesh.load(os.path.join(YCBModelsDir, 'models', anno['objName'], 'textured_simple.obj'))
+
+        # apply current pose to the object model
+        objMesh.v = np.matmul(objMesh.v, cv2.Rodrigues(anno['objRot'])[0].T) + anno['objTrans']
+        mesh.vertices = np.matmul(mesh.vertices, cv2.Rodrigues(anno['objRot'])[0].T) + anno['objTrans']
+        contact = np.zeros([5])
+        for i in range(5):
+            # calculate the distance between the points on the tip areas and the object mesh
+            dis = trimesh.proximity.signed_distance(mesh, tip_v_dict[i])
+            if np.where(np.abs(dis) < 0.0005)[0].shape[0]:
+                contact[i] = 1
+        print(contact)
+
+        ## implicit interaction to emplicit interaction
+        ## compared to build objec mesh, get contact info --> easier
+
         # Visualize
+        # open3d visualization
         if args['visType'] == 'open3d':
-            # open3d visualization
-            if not os.path.exists(os.path.join(YCBModelsDir, 'models', anno['objName'], 'textured_simple.obj')):
-                raise Exception('3D object models not available in %s'%(os.path.join(YCBModelsDir, 'models', anno['objName'], 'textured_simple.obj')))
-
-            # load object model
-            objMesh = read_obj(os.path.join(YCBModelsDir, 'models', anno['objName'], 'textured_simple.obj'))
-            mesh = trimesh.load(os.path.join(YCBModelsDir, 'models', anno['objName'], 'textured_simple.obj'))
-
-            # apply current pose to the object model
-            objMesh.v = np.matmul(objMesh.v, cv2.Rodrigues(anno['objRot'])[0].T) + anno['objTrans']
-            mesh.vertices = np.matmul(mesh.vertices, cv2.Rodrigues(anno['objRot'])[0].T) + anno['objTrans']
-            contact = np.zeros([5])
-            for i in range(5):
-                dis = trimesh.proximity.signed_distance(mesh, tip_v_dict[i])
-                print(dis)
-                if np.where(np.abs(dis) < 0.0005)[0].shape[0]:
-                    contact[i] = 1
-            print(contact)
-
-            ## implicit interaction to emplicit interaction
-            ## compared to build objec mesh, get contact info --> easier
-
             # show
             if split == 'train':
                 open3dVisualize_tip([handMesh, objMesh], tip_v, tipJoints3D,  ['r', 'g'])
             else:
                 open3dVisualize([objMesh], ['r', 'g'])
 
-        # elif args['visType'] == 'matplotlib':
-
+        elif args['visType'] == 'matplotlib':
             # draw 2D projections of annotations on RGB image
             if split == 'train':
                 imgAnno = showHandJoints(img, handKps[jointsMapManoToSimple])
@@ -204,7 +203,6 @@ if __name__ == '__main__':
             figManager = plt.get_current_fig_manager()
            # figManager.resize(*figManager.window.maxsize())
             figManager.window.showMaximized()
-
 
             # show RGB image
             ax0 = fig.add_subplot(2, 2, 1)
